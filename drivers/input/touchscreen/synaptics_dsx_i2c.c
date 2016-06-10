@@ -40,6 +40,11 @@
 #ifdef KERNEL_ABOVE_2_6_38
 #include <linux/input/mt.h>
 #endif
+
+#ifdef CONFIG_BOEFFLA_TOUCH_KEY_CONTROL
+#include <linux/boeffla_touchkey_control.h>
+#endif
+
 #define DRIVER_NAME "synaptics-rmi-ts"
 #define INPUT_PHYS_NAME "synaptics-rmi-ts/input0"
 
@@ -84,7 +89,7 @@
 #define DTAP_DETECT_S3203     0x01
 
 
-#define UnkownGesture       0
+#define UnkownGestrue       0
 #define DouTap              1   // double tap
 #define UpVee               2   // V
 #define DownVee             3   // ^
@@ -99,40 +104,45 @@
 #define Mgestrue            12  // M
 #define Wgestrue            13  // W
 
-// carlosavignano@aospa.co, gesture codes.
-#define KEY_GESTURE_UNKNOWN           0    // KEY_RESERVED
-#define KEY_GESTURE_CIRCLE            59   // KEY_F1
-#define KEY_GESTURE_TWO_SWIPE         60   // KEY_F2
-#define KEY_GESTURE_V                 61   // KEY_F3
-#define KEY_GESTURE_V_REVERSE         62   // KEY_F4
-#define KEY_GESTURE_LEFT_V            63   // KEY_F5
-#define KEY_GESTURE_RIGHT_V           64   // KEY_F6
-#define KEY_GESTURE_LTR_ONE_SWIPE     65   // KEY_F7
-#define KEY_GESTURE_RTL_ONE_SWIPE     66   // KEY_F8
-#define KEY_GESTURE_UTD_ONE_SWIPE     67   // KEY_F9
-#define KEY_GESTURE_DTU_ONE_SWIPE     68   // KEY_F10
-#define KEY_GESTURE_W                 87   // KEY_F11
-#define KEY_GESTURE_M                 88   // KEY_F12
-#define KEY_GESTURE_DOUBLE_TAP        183  // KEY_F13
+// carlo@oneplus.net 2015-05-25, begin.
+#ifdef VENDOR_EDIT_OXYGEN
+#define KEY_DOUBLE_TAP          249 // double tap to wake
+#define KEY_GESTURE_CIRCLE      250 // draw circle to lunch camera
+#define KEY_GESTURE_TWO_SWIPE	251 // swipe two finger vertically to play/pause
+#define KEY_GESTURE_V           252 // draw v to toggle flashlight
+#define KEY_GESTURE_LEFT_V      253 // draw left arrow for previous track
+#define KEY_GESTURE_RIGHT_V     254 // draw right arrow for next track
+#endif
+// carlo@oneplus.net 2015-05-25, end.
 
-// carlosavignano@aospa.co, gestures enabled bit.
 #define BIT0 (0x1 << 0)
+#define BIT1 (0x1 << 1)
+#define BIT2 (0x1 << 2)
+#define BIT3 (0x1 << 3)
+#define BIT4 (0x1 << 4)
+#define BIT5 (0x1 << 5)
+#define BIT6 (0x1 << 6)
+#define BIT7 (0x1 << 7)
 
-// carlosavignano@aospa.co, whether specific gesture is enabled from userspace.
-static int DouTap_gesture = 0; // "double tap"
-static int Circle_gesture = 0; // "O"
+#define IMPLEMENTED_FUNCTIONS	(BIT0 | BIT1)
+
+static int LeftVee_gesture = 0; //">"
+ static int RightVee_gesture = 0; //"<"
 static int DouSwip_gesture = 0; // "||"
-static int UpVee_gesture = 0; // "V"
-static int LeftVee_gesture = 0; // ">"
-static int RightVee_gesture = 0; // "<"
-static int Left2RightSwip_gesture = 0; // "(-->)"
-static int Right2LeftSwip_gesture = 0; // "(<--)"
-static int Up2DownSwip_gesture = 0; // "up to down |"
-static int Down2UpSwip_gesture = 0; // "down to up |"
-static int DownVee_gesture = 0; // "^"
-static int Wgesture_gesture = 0; // "(W)"
-static int Mgesture_gesture = 0; // "(M)"
+static int Circle_gesture = 0; // "O"
+static int UpVee_gesture = 0; //"V"
+//static int DownVee_gesture = 0; //"^"
+static int DouTap_gesture = 0; //"double tap"
 
+static int Left2RightSwip_gesture=0;//"(-->)"
+static int Right2LeftSwip_gesture=0;//"(<--)"
+static int Up2DownSwip_gesture =0;//"up to down |"
+static int Down2UpSwip_gesture =0;//"down to up |"
+
+//static int Wgestrue_gesture =0;//"(W)"
+//static int Mgestrue_gesture =0;//"(M)"
+
+int DisableGestureHaptic = 0;
 
 //shankai @ bsp  add for tp type compatibility.
   char *tp_firmware_strings[TP_TYPE_MAX][LCD_TYPE_MAX] = {
@@ -175,6 +185,10 @@ static int Mgesture_gesture = 0; // "(M)"
 #define NO_SLEEP_OFF (0 << 2)
 #define NO_SLEEP_ON (1 << 2)
 #define CONFIGURED (1 << 7)
+
+#ifdef CONFIG_BOEFFLA_TOUCH_KEY_CONTROL
+int finger0_prev_status = 0;
+#endif
 
 #include <linux/wakelock.h>
 static struct wake_lock tp_wake_lock;//有双击唤醒中断时，延时2S，放弃suspend流程，等待resume流程
@@ -515,6 +529,29 @@ static struct device_attribute attrs[] = {
 			sense_frequency_selection_reg_store),
 
 };
+
+static struct input_dev * boeffla_syn_pwrdev;
+static DEFINE_MUTEX(boeffla_syn_pwrkeyworklock);
+void qpnp_hap_ignore_next_request(void);
+
+static void boeffla_syn_presspwr(struct work_struct * boeffla_syn_presspwr_work)
+{
+	if (!mutex_trylock(&boeffla_syn_pwrkeyworklock))
+		return;
+
+	input_event(boeffla_syn_pwrdev, EV_KEY, KEY_POWER, 1);
+	input_event(boeffla_syn_pwrdev, EV_SYN, 0, 0);
+	msleep(60);
+
+	input_event(boeffla_syn_pwrdev, EV_KEY, KEY_POWER, 0);
+	input_event(boeffla_syn_pwrdev, EV_SYN, 0, 0);
+	msleep(60);
+
+    mutex_unlock(&boeffla_syn_pwrkeyworklock);
+	return;
+}
+static DECLARE_WORK(boeffla_syn_presspwr_work, boeffla_syn_presspwr);
+
 
 #ifdef CONFIG_HAS_EARLYSUSPEND
 static ssize_t synaptics_rmi4_full_pm_cycle_show(struct device *dev,
@@ -1034,6 +1071,7 @@ static int synaptics_rmi4_f11_abs_report(struct synaptics_rmi4_data *rmi4_data,
 		}
 	}
 
+
 	if (touch_count == 0) {
 		input_report_key(rmi4_data->input_dev,
 				BTN_TOUCH, 0);
@@ -1061,12 +1099,37 @@ static int synaptics_rmi4_f11_abs_report(struct synaptics_rmi4_data *rmi4_data,
 #define SYNA_I2C_LOAD_UA		10000
 #define SYNA_I2C_LPM_LOAD_UA	10
 
+
 #define SYNA_NO_GESTURE					0x00
 #define SYNA_ONE_FINGER_DOUBLE_TAP		0x03
 #define SYNA_TWO_FINGER_SWIPE			0x07
 #define SYNA_ONE_FINGER_CIRCLE			0x08
 #define SYNA_ONE_FINGER_DIRECTION		0x0a
 #define SYNA_ONE_FINGER_W_OR_M		    0x0b
+
+
+#define KEY_F3			61   //双击唤醒屏幕,
+#define KEY_F4			62   //启动相机，划圈
+#define KEY_F5			63   // 启动手电筒，正V
+#define KEY_F6			64   // 暂停歌曲，两丨丨
+#define KEY_F7			65  // 上一首，<
+#define KEY_F8			66  // 下一首, >
+#define KEY_F9			67  // M or W
+
+#define UnkownGestrue       0
+#define DouTap              1   // double tap
+#define UpVee               2   // V
+#define DownVee             3   // ^
+#define LeftVee             4   // >
+#define RightVee            5   // <
+#define Circle              6   // O
+#define DouSwip             7   // ||
+#define Left2RightSwip      8   // -->
+#define Right2LeftSwip      9   // <--
+#define Up2DownSwip         10  // |v
+#define Down2UpSwip         11  // |^
+#define Mgestrue            12  // M
+#define Wgestrue            13  // W
 
 #define BLANK		1
 #define UNBLANK		0
@@ -1476,39 +1539,86 @@ static int synaptics_rmi4_proc_read(char *page, char **start, off_t off,
 static int synaptics_rmi4_proc_write( struct file *filp, const char __user *buff,
 		unsigned long len, void *data ) {
 	unsigned char bak;
-	unsigned int enable;
-	char buf[10];
+	unsigned int enable ;
+		char buf[10];
+	if(len > 2)
+		return 0 ;
 
-	if (len > 2) {
-		return 0;
-	}
-
-	if (copy_from_user(buf, buff, len) ){
+		if( copy_from_user(buf, buff, len) ){
 		printk(KERN_INFO "%s: read proc input error.\n", __func__);
 		return len;
 	}
 
-	printk("%s val:%x \n", __func__, buf[0]);
 
-	// carlosavignano@aospa.co, read bit values if check for bit enabled.
-	// Gestures are handled at userspace level anyway, check for master switch value.
-	UpVee_gesture = (buf[0] & BIT0)?1:0;           //"V"
-	DouSwip_gesture = (buf[0] & BIT0)?1:0;         //"||"
-	LeftVee_gesture = (buf[0] & BIT0)?1:0;         //">"
-	RightVee_gesture = (buf[0] & BIT0)?1:0;        //"<"
-	Circle_gesture = (buf[0] & BIT0)?1:0;          //"O"
-	DouTap_gesture = (buf[0] & BIT0)?1:0;          //double tap
-	DownVee_gesture = (buf[0] & BIT0)?1:0;         //"^"
-	Left2RightSwip_gesture = (buf[0] & BIT0)?1:0;  //"(-->)"
-	Right2LeftSwip_gesture = (buf[0] & BIT0)?1:0;  //"(<--)"
-	Up2DownSwip_gesture = (buf[0] & BIT0)?1:0;     //"up to down |"
-	Down2UpSwip_gesture = (buf[0] & BIT0)?1:0;    //"down to up |"
-	Wgesture_gesture = (buf[0] & BIT0)?1:0;       //"(W)"
-	Mgesture_gesture = (buf[0] & BIT0)?1:0;       //"(M)"
-
+	 printk("%s val:%x \n", __func__, buf[0]);
+	UpVee_gesture = (buf[0] & BIT0)?1:0; //"V"
+	DouSwip_gesture = (buf[0] & BIT1)?1:0;//"||"
+	LeftVee_gesture = (buf[0] & BIT3)?1:0; //">"
+	RightVee_gesture = (buf[0] & BIT4)?1:0;//"<"
+	Circle_gesture = (buf[0] & BIT6)?1:0; //"O"
+	DouTap_gesture = (buf[0] & BIT7)?1:0; //double tap
 	//shankai@bsp ,  fixed the bug can not disable gesture when turned off
 	// gesture in ui   .2015.8.3
-	enable =(buff[0]==0)?0:1 ;
+	//enable =(buff[0]==0)?0:1 ;
+
+	enable = (UpVee_gesture | DouSwip_gesture | LeftVee_gesture |
+				RightVee_gesture | Circle_gesture | DouTap_gesture |
+				Left2RightSwip_gesture | Right2LeftSwip_gesture | Up2DownSwip_gesture | Down2UpSwip_gesture);
+	enable = (enable == 0) ? 0 : 1;
+
+	bak = syna_rmi4_data->gesture_enable ;
+	syna_rmi4_data->gesture_enable &= 0x00 ;
+	if(enable)
+		syna_rmi4_data->gesture_enable |= 0x6b ;
+	if(bak == syna_rmi4_data->gesture_enable)
+		return len ;
+
+	if(!(syna_use_gesture && syna_rmi4_data->gesture))
+		syna_use_gesture = (syna_rmi4_data->gesture_enable&0xff)?1:0 ;
+	print_ts(TS_DEBUG, KERN_ERR "enable=0x%x\n", syna_rmi4_data->gesture_enable);
+
+	return len;
+}
+
+static int synaptics_rmi4_proc_sweep_wake_implemented_read(char *page, char **start, off_t off,
+		int count, int *eof, void *data)
+{
+	return sprintf(page, "%d\n", IMPLEMENTED_FUNCTIONS);
+}
+
+
+static int synaptics_rmi4_proc_sweep_wake_read(char *page, char **start, off_t off,
+		int count, int *eof, void *data)
+{
+	return sprintf(page, "%d\n", Left2RightSwip_gesture + (DisableGestureHaptic * BIT1));
+}
+
+static int synaptics_rmi4_proc_sweep_wake_write(struct file *filp, const char __user *buff,
+		unsigned long len, void *data)
+{
+	char buf[2];
+	unsigned char bak;
+	unsigned int enable;
+
+	if (len > 2)
+		return 0;
+
+	if (copy_from_user(buf, buff, len)) {
+		print_ts(TS_DEBUG, KERN_ERR "Read proc input error.\n");
+		return -EFAULT;
+	}
+
+	Left2RightSwip_gesture = (buf[0] & BIT0) ? 1 : 0;
+	Right2LeftSwip_gesture = (buf[0] & BIT0) ? 1 : 0;
+	Up2DownSwip_gesture = (buf[0] & BIT0) ? 1 : 0;
+	Down2UpSwip_gesture = (buf[0] & BIT0) ? 1 : 0;
+
+	DisableGestureHaptic = (buf[0] & BIT1) ? 1 : 0;
+
+	enable = (UpVee_gesture | DouSwip_gesture | LeftVee_gesture |
+				RightVee_gesture | Circle_gesture | DouTap_gesture |
+				Left2RightSwip_gesture | Right2LeftSwip_gesture | Up2DownSwip_gesture | Down2UpSwip_gesture);
+	enable = (enable == 0) ? 0 : 1;
 
 	bak = syna_rmi4_data->gesture_enable ;
 	syna_rmi4_data->gesture_enable &= 0x00 ;
@@ -1734,6 +1844,18 @@ static int synaptics_rmi4_init_touchpanel_proc(void)
 	if (proc_entry) {
 		proc_entry->write_proc = synaptics_rmi4_proc_glove_write;
 		proc_entry->read_proc = synaptics_rmi4_proc_glove_read;
+	}
+	
+	// sweep wake
+	proc_entry = create_proc_entry("sweep_wake_enable", 0664, procdir);
+	if (proc_entry) {
+		proc_entry->write_proc = synaptics_rmi4_proc_sweep_wake_write;
+		proc_entry->read_proc = synaptics_rmi4_proc_sweep_wake_read;
+	}	
+
+	proc_entry = create_proc_entry("sweep_wake_enable_implemented", 0664, procdir);
+	if (proc_entry) {
+		proc_entry->read_proc = synaptics_rmi4_proc_sweep_wake_implemented_read;
 	}
 
 	proc_entry = create_proc_entry("gesture_enable", 0666, procdir);
@@ -2518,12 +2640,12 @@ hw_shutdown:
 }
 
 static unsigned char synaptics_rmi4_update_gesture2(unsigned char *gesture,unsigned char *gestureext) {
-	int i;
-	unsigned char code = KEY_GESTURE_UNKNOWN;
-	unsigned char gesturemode = UnkownGesture;
+	int i ;
+	unsigned char keycode = KEY_F4 ;
+	unsigned char gesturemode = UnkownGestrue ;
 	unsigned short points[16];
 
-	for (i = 0 ; i < 2*6; i++) {
+	for(i = 0 ; i < 2*6; i++) {
 		points[i] = ((unsigned short)gestureext[i*2]) | (((unsigned short)gestureext[i*2+1])<<8) ;
 	}
 
@@ -2533,139 +2655,162 @@ static unsigned char synaptics_rmi4_update_gesture2(unsigned char *gesture,unsig
 		2 ;// 1--clockwise, 0--anticlockwise, not circle, report 2
 
 	switch(gesture[0]) {
-		case CIRCLE_DETECT: // || CIRCLE_DETECT_S3203 (equal)
-			gesturemode = Circle;
-			if (Circle_gesture) {
-				code = (unsigned char) KEY_GESTURE_CIRCLE;
-			}
-			break;
+		//case SYNA_ONE_FINGER_CIRCLE:
+		case CIRCLE_DETECT:
+
+			gesturemode = Circle ;
+		//	keyvalue = KEY_F4;
+			break ;
+
+
 		case SWIPE_DETECT:
-		// case SWIPE_DETECT_S3203: (disabled)
 			gesturemode =
-					(gestureext[24] == 0x41) ? Left2RightSwip   :
-					(gestureext[24] == 0x42) ? Right2LeftSwip   :
-					(gestureext[24] == 0x44) ? Up2DownSwip	  :
-					(gestureext[24] == 0x48) ? Down2UpSwip	  :
-					(gestureext[24] == 0x80) ? DouSwip		  :
-					UnkownGesture;
-			if (gesturemode == DouSwip || gesturemode == Down2UpSwip ||
-					gesturemode == Up2DownSwip) {
-				if (abs(points[3] - points[1]) <= 800) {
-					gesturemode = UnkownGesture;
-					code = (unsigned char) KEY_GESTURE_UNKNOWN;
-				} else {
-					if (gesturemode == DouSwip) {
-						if (DouSwip_gesture) {
-							code = (unsigned char) KEY_GESTURE_TWO_SWIPE;
-						}
-					} else if (gesturemode == Down2UpSwip) {
-						if (Down2UpSwip_gesture) {
-							code = (unsigned char) KEY_GESTURE_DTU_ONE_SWIPE;
-						}
-					} else if (gesturemode == Up2DownSwip) {
-						if (Up2DownSwip_gesture) {
-							code = (unsigned char) KEY_GESTURE_UTD_ONE_SWIPE;
-						}
-					}
-				}
-			} else if (gesturemode == Left2RightSwip) {
-				if (Left2RightSwip_gesture) {
-					code = (unsigned char) KEY_GESTURE_LTR_ONE_SWIPE;
-				}
-			} else if (gesturemode == Right2LeftSwip) {
-				if (Right2LeftSwip_gesture) {
-					code = (unsigned char) KEY_GESTURE_RTL_ONE_SWIPE;
-				}
+				(gestureext[24] == 0x41) ? Left2RightSwip   :
+				(gestureext[24] == 0x42) ? Right2LeftSwip   :
+				(gestureext[24] == 0x44) ? Up2DownSwip      :
+				(gestureext[24] == 0x48) ? Down2UpSwip      :
+				(gestureext[24] == 0x80) ? DouSwip          :
+				UnkownGestrue;
+
+			if( gesturemode==DouSwip ||
+					gesturemode==Down2UpSwip ||
+					gesturemode==Up2DownSwip) {
+				if(abs(points[3] - points[1]) <= 800)
+					gesturemode=UnkownGestrue;
 			}
-			break;
-		case DTAP_DETECT:
-		// case DTAP_DETECT_S3203: (disabled)
-			gesturemode = DouTap;
-			if (DouTap_gesture) {
-				code = (unsigned char) KEY_GESTURE_DOUBLE_TAP;
+
+			if(gesturemode!=UnkownGestrue)	{
+
+				//keyvalue = KEY_F6;
+
 			}
-			break;
-		case VEE_DETECT:
-		// case VEE_DETECT_S3203: (disabled)
+
+			break ;
+
+		case SYNA_ONE_FINGER_DOUBLE_TAP:
+			gesturemode = DouTap ;
+			//keyvalue = KEY_F3;
+			break ;
+
+		case SYNA_ONE_FINGER_DIRECTION:
 			switch(gesture[2]){
 				case 0x01:  //UP
-					gesturemode = DownVee;
-					if (DownVee_gesture) {
-						code = (unsigned char) KEY_GESTURE_V_REVERSE;
-					}
+					gesturemode = DownVee ;
+					//keyvalue = KEY_F5;
 					break;
 				case 0x02:  //DOWN
-					gesturemode = UpVee;
-					if (UpVee_gesture) {
-						code = (unsigned char) KEY_GESTURE_V;
-					}
+					gesturemode = UpVee ;
+					//keyvalue = KEY_F5;
 					break;
 				case 0x04:  //LEFT
-					gesturemode = RightVee;
-					if (RightVee_gesture) {
-						code = (unsigned char) KEY_GESTURE_RIGHT_V;
-					}
+					gesturemode = RightVee ;
+					//keyvalue = KEY_F7;
 					break;
 				case 0x08:  //RIGHT
-					gesturemode = LeftVee;
-					if (LeftVee_gesture) {
-						code = (unsigned char) KEY_GESTURE_LEFT_V;
-					}
+					gesturemode = LeftVee ;
+					//keyvalue = KEY_F8;
 					break;
 			}
 			break;
+
+
 		case UNICODE_DETECT:
-		// case UNICODE_DETECT_S3203: (disabled)
 			gesturemode =
 				(gesture[2] == 0x77 && gesture[3] == 0x00) ? Wgestrue :
 				(gesture[2] == 0x6d && gesture[3] == 0x00) ? Mgestrue :
-				UnkownGesture;
-			if (gesturemode == Wgestrue) {
-				if (Wgesture_gesture) {
-					code = (unsigned char) KEY_GESTURE_W;
-				}
-			} else if (gesturemode == Mgestrue) {
-				if (Mgesture_gesture) {
-					code = (unsigned char) KEY_GESTURE_M;
-				}
-			}
-			break;
+				UnkownGestrue;
+
+			//keyvalue = KEY_F9;
+			break ;
 		case 0:
-			gesturemode = UnkownGesture;
-			code = (unsigned char) KEY_GESTURE_UNKNOWN;
+			gesturemode = UnkownGestrue;
+	}
+// carlo@oneplus.net 2015-05-25, begin.
+#ifdef VENDOR_EDIT_OXYGEN
+	keycode = UnkownGestrue;
+	// Get key code based on registered gesture.
+	switch (gesture) {
+		case DouTap:
+			keycode = KEY_DOUBLE_TAP;
+			break;
+		case UpVee:
+			keycode = KEY_GESTURE_V;
+			break;
+		case DownVee:
+			keycode = KEY_GESTURE_V;
+			break;
+		case LeftVee:
+			keycode = KEY_GESTURE_RIGHT_V;
+			break;
+		case RightVee:
+			keycode = KEY_GESTURE_LEFT_V;
+			break;
+		case Circle:
+			keycode = KEY_GESTURE_CIRCLE;
+			break;
+		case DouSwip:
+			keycode = KEY_GESTURE_TWO_SWIPE;
 			break;
 		default:
 			break;
 	}
-
+#endif
+// carlo@oneplus.net 2015-05-25, end.
 	printk("detect %s gesture\n", gesturemode == DouTap ? "double tap" :
-			gesturemode == UpVee ? "up vee" :
-			gesturemode == DownVee ? "down vee" :
-			gesturemode == LeftVee ? "(>)" :
-			gesturemode == RightVee ? "(<)" :
-			gesturemode == Circle ? "circle" :
-			gesturemode == DouSwip ? "(||)" :
-			gesturemode == Left2RightSwip ? "(-->)" :
-			gesturemode == Right2LeftSwip ? "(<--)" :
-			gesturemode == Up2DownSwip ? "up to down |" :
-			gesturemode == Down2UpSwip ? "down to up |" :
-			gesturemode == Mgestrue ? "(M)" :
-			gesturemode == Wgestrue ? "(W)" : "unknown");
+                                                        gesturemode == UpVee ? "up vee" :
+                                                        gesturemode == DownVee ? "down vee" :
+                                                        gesturemode == LeftVee ? "(>)" :
+                                                        gesturemode == RightVee ? "(<)" :
+                                                        gesturemode == Circle ? "circle" :
+								 gesturemode == DouSwip ? "(||)" :
+                                                        gesturemode == Left2RightSwip ? "(-->)" :
+                                                        gesturemode == Right2LeftSwip ? "(<--)" :
+                                                        gesturemode == Up2DownSwip ? "up to down |" :
+                                                        gesturemode == Down2UpSwip ? "down to up |" :
+                                                        gesturemode == Mgestrue ? "(M)" :
+                                                        gesturemode == Wgestrue ? "(W)" : "unknown");
+	if((gesturemode == DouTap && DouTap_gesture)||(gesturemode == RightVee && RightVee_gesture)\
+        ||(gesturemode == LeftVee && LeftVee_gesture)||(gesturemode == UpVee && UpVee_gesture)\
+        ||(gesturemode == Circle && Circle_gesture)||(gesturemode == DouSwip && DouSwip_gesture)){
 
-	if (gesturemode != UnkownGesture) { // if (gesturemode != UnkownGesture && code != KEY_GESTURE_UNKNOWN) {
-		// Send key event with scan code == keyvalue to userspace.
-		input_report_key(syna_rmi4_data->input_dev, code, 1);
+		// check if haptic feedback for gesture should be suppressed
+		if (DisableGestureHaptic)
+			qpnp_hap_ignore_next_request();
+
+		input_report_key(syna_rmi4_data->input_dev, keycode, 1);
 		input_sync(syna_rmi4_data->input_dev);
-		input_report_key(syna_rmi4_data->input_dev, code, 0);
+		input_report_key(syna_rmi4_data->input_dev, keycode, 0);
 		input_sync(syna_rmi4_data->input_dev);
+    }
+    else if ((gesturemode == Left2RightSwip && Left2RightSwip_gesture)||(gesturemode == Right2LeftSwip && Right2LeftSwip_gesture)\
+			||(gesturemode == Up2DownSwip && Up2DownSwip_gesture)||(gesturemode == Down2UpSwip && Down2UpSwip_gesture))
+    {
+		// if user has double tap gesture enabled, we can still deliver haptic feedback also for swipe gestures (incl. proximity check)
+		// hence we check if this is the case and if user wants to receive haptic feedback
+		// if not, send power key
+		if (DouTap_gesture && !DisableGestureHaptic)
+		{
+			gesturemode = DouTap;
+			input_report_key(syna_rmi4_data->input_dev, keycode, 1);
+			input_sync(syna_rmi4_data->input_dev);
+			input_report_key(syna_rmi4_data->input_dev, keycode, 0);
+			input_sync(syna_rmi4_data->input_dev);
+		}
+		else
+		{
+			// press powerkey
+			schedule_work(&boeffla_syn_presspwr_work);
+		}
 	}
 
-	if (gesturemode != UnkownGesture) {
-		syna_rmi4_data->gesturemode = gesturemode;
+	if(gesturemode != UnkownGestrue) {
+		syna_rmi4_data->gesturemode = gesturemode ;
 		memcpy(syna_rmi4_data->points,points,sizeof(syna_rmi4_data->points));
+	} else {
+		keycode = 0 ;
 	}
 
-	return code;
+	return keycode ;
 }
 
 /**
@@ -2900,6 +3045,14 @@ static int synaptics_rmi4_f12_abs_report(struct synaptics_rmi4_data *rmi4_data,
 			touch_count++;
 			finger_info |= 1 ;
 			old_y[finger] = y;
+
+#ifdef CONFIG_BOEFFLA_TOUCH_KEY_CONTROL
+			if ((finger == 0) && (finger_status == 1) && finger0_prev_status == 0)
+			{
+				finger0_prev_status = 1;
+				btkc_touch(x, y);
+			}
+#endif
 		}
 	}
 
@@ -2921,6 +3074,10 @@ static int synaptics_rmi4_f12_abs_report(struct synaptics_rmi4_data *rmi4_data,
 				BTN_TOOL_FINGER, 0);
 #ifndef TYPE_B_PROTOCOL
 		input_mt_sync(rmi4_data->input_dev);
+#endif
+
+#ifdef CONFIG_BOEFFLA_TOUCH_KEY_CONTROL
+		finger0_prev_status = 0;
 #endif
 	}
 
@@ -4142,20 +4299,13 @@ static void synaptics_rmi4_set_params(struct synaptics_rmi4_data *rmi4_data)
 	set_bit(KEY_BACK, rmi4_data->input_dev->keybit);
 	set_bit(KEY_MENU, rmi4_data->input_dev->keybit);
 	set_bit(KEY_HOMEPAGE, rmi4_data->input_dev->keybit);
+	set_bit(KEY_F3, rmi4_data->input_dev->keybit);
+	set_bit(KEY_F4, rmi4_data->input_dev->keybit);
+	set_bit(KEY_F5, rmi4_data->input_dev->keybit);
+	set_bit(KEY_F6, rmi4_data->input_dev->keybit);
+	set_bit(KEY_F7, rmi4_data->input_dev->keybit);
+	set_bit(KEY_F8, rmi4_data->input_dev->keybit);
 	set_bit(KEY_POWER, rmi4_data->input_dev->keybit);
-	set_bit(KEY_GESTURE_CIRCLE, rmi4_data->input_dev->keybit);
-	set_bit(KEY_GESTURE_TWO_SWIPE, rmi4_data->input_dev->keybit);
-	set_bit(KEY_GESTURE_V, rmi4_data->input_dev->keybit);
-	set_bit(KEY_GESTURE_LEFT_V, rmi4_data->input_dev->keybit);
-	set_bit(KEY_GESTURE_RIGHT_V, rmi4_data->input_dev->keybit);
-	set_bit(KEY_GESTURE_LTR_ONE_SWIPE, rmi4_data->input_dev->keybit);
-	set_bit(KEY_GESTURE_RTL_ONE_SWIPE, rmi4_data->input_dev->keybit);
-	set_bit(KEY_GESTURE_UTD_ONE_SWIPE, rmi4_data->input_dev->keybit);
-	set_bit(KEY_GESTURE_DTU_ONE_SWIPE, rmi4_data->input_dev->keybit);
-	set_bit(KEY_GESTURE_V_REVERSE, rmi4_data->input_dev->keybit);
-	set_bit(KEY_GESTURE_W, rmi4_data->input_dev->keybit);
-	set_bit(KEY_GESTURE_M, rmi4_data->input_dev->keybit);
-	set_bit(KEY_GESTURE_DOUBLE_TAP, rmi4_data->input_dev->keybit);
 	synaptics_ts_init_virtual_key(rmi4_data) ;
 
 	input_set_abs_params(rmi4_data->input_dev,
@@ -5386,6 +5536,26 @@ static struct i2c_driver synaptics_rmi4_driver = {
  */
 static int __init synaptics_rmi4_init(void)
 {
+	int rc = 0;
+
+	// allocate and register input device for sending power key events
+	boeffla_syn_pwrdev = input_allocate_device();
+	if (!boeffla_syn_pwrdev)
+	{
+		pr_err("Can't allocate suspend autotest power button\n");
+		return -EFAULT;
+	}
+
+	input_set_capability(boeffla_syn_pwrdev, EV_KEY, KEY_POWER);
+	boeffla_syn_pwrdev->name = "boeffla_syn_pwrkey";
+	boeffla_syn_pwrdev->phys = "boeffla_syn_pwrkey/input0";
+	rc = input_register_device(boeffla_syn_pwrdev);
+	if (rc)
+	{
+		pr_err("%s: input_register_device err=%d\n", __func__, rc);
+		return -EFAULT;
+	}
+
 	return i2c_add_driver(&synaptics_rmi4_driver);
 }
 
