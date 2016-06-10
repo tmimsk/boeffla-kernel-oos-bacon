@@ -129,7 +129,7 @@ struct test_header {
 #define Wgestrue            13  // W
 
 // carlo@oneplus.net 2015-05-25, begin.
-#ifdef VENDOR_EDIT
+#ifdef VENDOR_EDIT_OXYGEN
 #define KEY_DOUBLE_TAP          249 // double tap to wake
 #define KEY_GESTURE_CIRCLE      250 // draw circle to lunch camera
 #define KEY_GESTURE_TWO_SWIPE	251 // swipe two finger vertically to play/pause
